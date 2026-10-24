@@ -1,0 +1,56 @@
+{
+  "identity_cols": [
+    "Enrolment ID",
+    "Full Name",
+    "Batch #"
+  ],
+  "pdf_name_col": "Enrolment ID",
+  "written_cfg": {},
+  "written_name": "Written Test",
+  "wt_enabled": false,
+  "sections": [
+    {
+      "name": "Marks Table 1",
+      "type": "marks_table",
+      "columns": [
+        "Python Prog",
+        "EDA Foundation",
+        "Applied EDA",
+        "MySQL and PowerBI",
+        "Aptitude"
+      ],
+      "enabled": true,
+      "col_cfg": {
+        "Python Prog": {
+          "label": "Python Prog",
+          "max": 100
+        },
+        "EDA Foundation": {
+          "label": "EDA Foundation",
+          "max": 100
+        },
+        "Applied EDA": {
+          "label": "Applied EDA",
+          "max": 100
+        },
+        "MySQL and PowerBI": {
+          "label": "MySQL and PowerBI",
+          "max": 100
+        },
+        "Aptitude": {
+          "label": "Aptitude",
+          "max": 100
+        }
+      }
+    }
+  ],
+  "perf_targets": [],
+  "show_perf": true,
+  "intro_text": "This report presents a comprehensive summary of your performance in the **Data Analysis** Assessment conducted by **Innomatics\nResearch Labs** on **23rd May 2026.** The assessment was designed to evaluate your technical knowledge, analytical thinking,\nproblem-solving ability, and practical understanding across key domains, including **Python Programming, EDA Foundations, Applied\nEDA, MySQL & Power BI, and Aptitude**.\nThe report highlights your overall performance, module-wise strengths, and improvement areas, providing valuable insights to support\nyour continuous learning journey and career growth in the field of Data Analytics.",
+  "show_tech_action": false,
+  "show_comm_action": false,
+  "enable_mock_interview": true,
+  "marks_benchmark_note": "<b><font color='#dc2626'>Important:</font></b> Your performance is evaluated relative to all candidates across all branches of Innomatics Research Labs who appeared for the DataAnalysis Job Fitment Assessment. The benchmarks shown below indicate the score required to be among the top 10% in each module.",
+  "marks_show_benchmark_note": true,
+  "saved_at": "2026-05-27T12:33:49.384052"
+}

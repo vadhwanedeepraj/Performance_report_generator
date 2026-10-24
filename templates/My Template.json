@@ -1,0 +1,55 @@
+{
+  "identity_cols": [
+    "Enrolment ID",
+    "Full Name",
+    "Batch #",
+    "Branch"
+  ],
+  "pdf_name_col": "Enrolment ID",
+  "written_cfg": {},
+  "written_name": "Written Test",
+  "wt_enabled": false,
+  "sections": [
+    {
+      "name": "Marks Table 1",
+      "type": "marks_table",
+      "columns": [
+        "MCQ Python\n(out of 20)",
+        "MCQ EDA\n(out of 20)",
+        "MCQ MySQL\n(out of 20)",
+        "MCQ PowerBI\n(out of 20)",
+        "MCQ Adv Stats\n(out of 20)"
+      ],
+      "enabled": true,
+      "col_cfg": {
+        "MCQ Python\n(out of 20)": {
+          "label": "MCQ Python",
+          "max": 20
+        },
+        "MCQ EDA\n(out of 20)": {
+          "label": "MCQ EDA",
+          "max": 20
+        },
+        "MCQ MySQL\n(out of 20)": {
+          "label": "MCQ MySQL",
+          "max": 20
+        },
+        "MCQ PowerBI\n(out of 20)": {
+          "label": "MCQ PowerBI",
+          "max": 20
+        },
+        "MCQ Adv Stats\n(out of 20)": {
+          "label": "MCQ Adv Stats",
+          "max": 20
+        }
+      }
+    }
+  ],
+  "perf_targets": [],
+  "show_perf": false,
+  "intro_text": "",
+  "show_tech_action": true,
+  "show_comm_action": true,
+  "enable_mock_interview": true,
+  "saved_at": "2026-05-23T14:51:10.474056"
+}

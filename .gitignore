@@ -179,3 +179,19 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+# Email Dispatcher — sensitive credential files
+.smtp_creds
+.smtp_key
+.streamlit/secrets.toml
+email_config.json
+
+
+# Generated runtime logs & outputs
+audit_logs.csv
+audit_logs_archive_*.csv
+generation_history.json
+email_logs/
+reports/
+.ai_cache/
+test_out.pdf
+
