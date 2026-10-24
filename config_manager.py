@@ -111,6 +111,7 @@ DEFAULT_REPORT_CONFIG: Dict[str, Any] = {
     "logo_height": 70,          # points
     "logo_align": "center",     # "left", "center", "right"
     "show_logo": True,
+    "logo_base64": "",
 
     # ── Page Geometry & Margins (in points: 72 points = 1 inch, ~2.83 pt/mm)
     "page_size": "A4",          # "A4", "Letter", "Legal"
@@ -324,6 +325,20 @@ def validate_and_normalize_config(raw_cfg: Dict[str, Any]) -> Dict[str, Any]:
             normalized_sections.append(s)
         if normalized_sections:
             cfg["sections"] = normalized_sections
+
+    # ── Preserve runtime and dynamic keys if present in raw_cfg
+    if "_batch_df" in raw_cfg:
+        cfg["_batch_df"] = raw_cfg["_batch_df"]
+    if "mi_eligibility_overrides" in raw_cfg:
+        cfg["mi_eligibility_overrides"] = dict(raw_cfg["mi_eligibility_overrides"])
+    if "logo_base64" in raw_cfg and raw_cfg["logo_base64"]:
+        cfg["logo_base64"] = str(raw_cfg["logo_base64"])
+    if "content_width" in raw_cfg:
+        cfg["content_width"] = raw_cfg["content_width"]
+    if "ai_model" in raw_cfg:
+        cfg["ai_model"] = raw_cfg["ai_model"]
+    if "show_rank" in raw_cfg:
+        cfg["show_rank"] = bool(raw_cfg["show_rank"])
 
     return cfg
 

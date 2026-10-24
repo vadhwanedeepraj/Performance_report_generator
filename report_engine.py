@@ -252,6 +252,9 @@ def compute_student_data(row, cfg, rank=None, total_students=None):
     tech_actions = []
     comm_actions = []
 
+    total_marks_scored = 0.0
+    total_marks_max    = 0.0
+
     for sec in all_sections:
         if isinstance(sec, dict) and not sec.get("enabled", True):
             continue
@@ -322,21 +325,31 @@ def compute_student_data(row, cfg, rank=None, total_students=None):
                             tech_actions.append(clean_c)
 
         elif stype == "marks_table":
-            items, _, _ = _parse_marks_cols(row, sec)
+            items, ts, tm = _parse_marks_cols(row, sec)
+            total_marks_scored += ts
+            total_marks_max    += tm
             for it in items:
                 if it.get("pct") is not None and it["pct"] < 75:
                     lbl = it.get("label", "Module")
                     tech_actions.append(f"{lbl} (Scored {it['score']}/{it['max']})")
 
-    tech_avg = sum(tech_scores) / len(tech_scores) if tech_scores else 0
-    comm_avg = sum(comm_scores) / len(comm_scores) if comm_scores else 0
+    tech_avg = sum(tech_scores) / len(tech_scores) if tech_scores else 0.0
+    comm_avg = sum(comm_scores) / len(comm_scores) if comm_scores else 0.0
 
     if has_written:
-        written_norm = (written_score / written_max) * 4 if written_max > 0 else 0
+        written_norm = (written_score / written_max) * 4 if written_max > 0 else 0.0
     else:
         written_norm = 0.0
 
-    overall = tech_avg
+    if tech_scores and total_marks_max > 0:
+        marks_norm = (total_marks_scored / total_marks_max) * 4.0
+        overall = (tech_avg + marks_norm) / 2.0
+    elif tech_scores:
+        overall = tech_avg
+    elif total_marks_max > 0:
+        overall = (total_marks_scored / total_marks_max) * 4.0
+    else:
+        overall = 0.0
 
     def get_gv(sc):
         if sc >= 3.5: return "A+ (Excellent)", "Pass — Outstanding",       "#059669"
@@ -352,7 +365,22 @@ def compute_student_data(row, cfg, rank=None, total_students=None):
     weaknesses = sorted([s for s in skill_list if s["score"] <= 2.5],
                          key=lambda x: x["score"])[:4]
 
+    id_cols = cfg.get("identity_columns") or cfg.get("identity_cols", [])
+    sname = ""
+    for c in id_cols:
+        if "name" in c.lower() and c in row.index:
+            sname = str(row[c]).strip()
+            break
+    if not sname:
+        for c in row.index:
+            if "name" in c.lower():
+                sname = str(row[c]).strip()
+                break
+    if not sname:
+        sname = "Learner"
+
     return {
+        "_sname":         sname,
         "overall":        overall,
         "tech_avg":       tech_avg,
         "comm_avg":       comm_avg,
@@ -363,6 +391,8 @@ def compute_student_data(row, cfg, rank=None, total_students=None):
         "written_score":  written_score,
         "written_max":    written_max,
         "written_norm":   written_norm if has_written else None,
+        "marks_scored":   total_marks_scored,
+        "marks_max":      total_marks_max,
         "skills":         skill_list,
         "strengths":      strengths,
         "weaknesses":     weaknesses,
@@ -543,6 +573,12 @@ def _draw_header_footer(canvas, doc, cfg, page_w, page_h, content_w, logo_bytes=
     # ── Header ─────────────────────────────────────────────
     if show_header:
         resolved_logo = logo_bytes or _LOGO_BYTES
+        if not resolved_logo and cfg.get("logo_base64"):
+            try:
+                import base64
+                resolved_logo = base64.b64decode(cfg["logo_base64"])
+            except Exception:
+                pass
         max_lw = float(cfg.get("logo_width", 260))
         max_lh = float(cfg.get("logo_height", 70))
         logo_align = str(cfg.get("logo_align", "center")).lower().strip()
@@ -831,6 +867,17 @@ def render_marks_motivation(story, row, cfg, styles, content_w):
 
     shortlist_cut = cfg.get("benchmark_shortlist", 90)
     is_shortlisted = eval_metric >= shortlist_cut
+
+    # Check for manual eligibility overrides from Step 4
+    overrides = cfg.get("mi_eligibility_overrides", {})
+    if overrides:
+        for k, ov in overrides.items():
+            name_part = k.split("__", 1)[-1].strip() if "__" in k else k.strip()
+            for col in row.index:
+                if str(row[col]).strip().lower() == name_part.lower():
+                    is_shortlisted = bool(ov)
+                    break
+
     enable_mock = cfg.get("enable_mock_interview", True)
 
     story.extend(_section_title("Overall Performance", styles, pc, content_w))
@@ -999,6 +1046,19 @@ def render_overview(story, pdata, cfg, styles, content_w):
             safe_paragraph(f"<font color='{v_color_m}'><b>{grade_l}</b></font>", styles["cell_color"]),
             safe_paragraph(f"<font color='{v_color_m}'><b>{verdict_m}</b></font>", styles["cell_color"]),
         ])
+        t = Table(cols_data, colWidths=[content_w / 3] * 3)
+    elif has_ratings and has_marks_sections and marks_max > 0:
+        pct = (marks_scored / marks_max) * 100
+        from constants import grade_label_from_pct
+        grade_l, v_color_m, verdict_m = grade_label_from_pct(pct)
+        cols_data = [["Technical Rating", "Marks Score", "Grade", "Verdict"]]
+        cols_data.append([
+            safe_paragraph(f"<b>{overall:.2f} / 4.00</b>", styles["cell_bold"]),
+            safe_paragraph(f"<b>{marks_scored:.0f} / {marks_max:.0f} ({pct:.1f}%)</b>", styles["cell_bold"]),
+            safe_paragraph(f"<font color='{v_color_m}'><b>{grade_l}</b></font>", styles["cell_color"]),
+            safe_paragraph(f"<font color='{v_color_m}'><b>{verdict_m}</b></font>", styles["cell_color"]),
+        ])
+        t = Table(cols_data, colWidths=[content_w * 0.25, content_w * 0.35, content_w * 0.20, content_w * 0.20])
     else:
         cols_data = [["Technical Score", "Grade", "Verdict"]]
         cols_data.append([
@@ -1006,8 +1066,7 @@ def render_overview(story, pdata, cfg, styles, content_w):
             safe_paragraph(f"<font color='{v_color}'><b>{grade}</b></font>", styles["cell_color"]),
             safe_paragraph(f"<font color='{v_color}'><b>{verdict}</b></font>", styles["cell_color"]),
         ])
-
-    t = Table(cols_data, colWidths=[content_w / 3] * 3)
+        t = Table(cols_data, colWidths=[content_w / 3] * 3)
     t.setStyle(build_corporate_table_style(cfg))
     block.append(t)
     block.append(Spacer(1, 3))
@@ -1230,6 +1289,12 @@ def build_single_report(row, cfg: dict, groq_client=None,
     global _LOGO_BYTES
 
     _resolved_logo = logo_bytes
+    if not _resolved_logo and cfg.get("logo_base64"):
+        try:
+            import base64
+            _resolved_logo = base64.b64decode(cfg["logo_base64"])
+        except Exception:
+            pass
     if not _resolved_logo:
         if not _LOGO_BYTES:
             for lp in ["logo/innomatics_logo.png", "logo/logo.png", "logo/company_logo.png"]:
