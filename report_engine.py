@@ -5,6 +5,7 @@ import zipfile
 import hashlib
 import time
 import json
+import threading
 from datetime import date
 from constants import (
     RATING_MAP, GRADE_SCALE_0_4, AI_CACHE_DIR, AI_CACHE_TTL_DAYS,
@@ -1137,104 +1138,48 @@ def render_marks_analysis(story, row, cfg, styles):
 
     story.append(Spacer(1, 3))
 
-def _compute_class_stats(row, cfg):
-    """
-    Compute class-relative stats from the batch DataFrame.
-    Returns: (rank, total_percentile, class_avg, module_pcts, module_benchmarks, table_benchmarks)
-      - rank             : int   — student rank (1 = highest scorer)
-      - total_percentile : float — percentile based on TOTAL marks across all modules (or selected table)
-      - class_avg        : float — class average percentage
-      - module_pcts      : dict  — {label: percentile} per subject column
-      - module_benchmarks: dict  — {(sec_title, label): {"P90": ..., "P50": ...}} + fallback {label: ...}
-      - table_benchmarks : dict  — {sec_title: {"P90": ..., "P50": ..., "rank": ..., "percentile": ..., "score": ..., "max": ..., "class_avg": ...}}
-    Returns (None, None, None, None, None, None) if no batch data.
-    """
-    import re as _r
-    import numpy as np
+_cohort_cache_lock = threading.Lock()
 
-    batch_df = cfg.get("_batch_df")
-    if batch_df is None or len(batch_df) < 2:
-        return None, None, None, None, None, None
-
+def precompute_cohort_cache(batch_df, cfg):
+    """
+    Precompute invariant class-level distributions and percentiles for the entire batch.
+    Takes O(N) time once, enabling subsequent per-student lookups to run in O(1) time
+    rather than scanning the entire DataFrame O(N) times repeatedly.
+    """
     marks_sections = [
         s for s in cfg.get("sections", [])
-        if isinstance(s, dict)                          # guard against list elements
-        and s.get("type") == "marks_table"
-        and s.get("enabled", True)
+        if isinstance(s, dict) and s.get("type") == "marks_table" and s.get("enabled", True)
     ]
-    if not marks_sections:
-        return None, None, None, None, None, None
+    if not marks_sections or batch_df is None or len(batch_df) < 2:
+        return None
+
+    import re as _r
+    import numpy as np
 
     total_students = len(batch_df)
     p90_th = float(cfg.get("benchmark_strong", 90))
     p50_th = float(cfg.get("benchmark_revision", 50))
 
-    # ── Table-wise Benchmarks & Individual Table Analysis ─────────
-    table_benchmarks = {}
+    parsed_sections = []
     for sec in marks_sections:
         sec_title = sec.get("title") or sec.get("name") or "Module-wise Performance"
         sec_name  = sec.get("name") or sec_title
-        
-        batch_table_scores = []
+
+        batch_scores = []
         for _, brow in batch_df.iterrows():
             _, ts, tm = _parse_marks_cols(brow, sec)
-            batch_table_scores.append(ts)
-        
-        _, my_sec_scored, my_sec_max = _parse_marks_cols(row, sec)
-        
-        sec_p90 = np.percentile(batch_table_scores, p90_th) if batch_table_scores else (my_sec_max * (p90_th / 100.0))
-        sec_p50 = np.percentile(batch_table_scores, p50_th) if batch_table_scores else (my_sec_max * (p50_th / 100.0))
-        sec_rank = sum(1 for s in batch_table_scores if s > my_sec_scored) + 1
-        sec_pct  = round((1 - (sec_rank - 1) / total_students) * 100, 1)
-        sec_avg  = round(sum(batch_table_scores) / total_students, 1) if total_students > 0 else 0.0
+            batch_scores.append(ts)
 
-        tbl_data = {
-            "P90": round(float(sec_p90), 1),
-            "P50": round(float(sec_p50), 1),
-            "rank": sec_rank,
-            "percentile": sec_pct,
-            "score": my_sec_scored,
-            "max": my_sec_max,
-            "class_avg": sec_avg,
-            "title": sec_title,
-            "name": sec_name,
-        }
-        table_benchmarks[sec_title] = tbl_data
-        table_benchmarks[sec_name]  = tbl_data
+        sec_p90 = np.percentile(batch_scores, p90_th) if batch_scores else 0.0
+        sec_p50 = np.percentile(batch_scores, p50_th) if batch_scores else 0.0
+        sec_avg = round(sum(batch_scores) / total_students, 1) if total_students > 0 else 0.0
 
-    # ── Combined or Selected-Table Overall Ranking ─────────────────
-    selected_tbl = cfg.get("mi_benchmark_table", "All Marks Tables (Combined)")
-    if selected_tbl and selected_tbl != "All Marks Tables (Combined)" and selected_tbl in table_benchmarks:
-        st_data   = table_benchmarks[selected_tbl]
-        rank      = st_data["rank"]
-        total_pct = st_data["percentile"]
-        class_avg = st_data["class_avg"]
-    else:
-        # Default: aggregate total across all marks tables
-        def _row_total(r):
-            scored, mx = 0.0, 0.0
-            for sec in marks_sections:
-                _, ts, tm = _parse_marks_cols(r, sec)
-                scored += ts; mx += tm
-            return round((scored / mx) * 100, 2) if mx > 0 else 0.0
-
-        all_totals = [_row_total(r) for _, r in batch_df.iterrows()]
-        my_total   = _row_total(row)
-        rank       = sum(1 for t in all_totals if t > my_total) + 1
-        total_pct  = round((1 - (rank - 1) / total_students) * 100, 1)
-        class_avg  = round(sum(all_totals) / total_students, 1)
-
-    # ── Per-module percentile and benchmark ───────────────────────
-    module_pcts = {}
-    module_benchmarks = {}
-    for sec in marks_sections:
-        sec_title = sec.get("title") or sec.get("name") or "Module-wise Performance"
-        sec_name  = sec.get("name") or sec_title
-        col_cfg   = sec.get("col_cfg", {})
+        col_data = []
+        col_cfg = sec.get("col_cfg", {})
         for col in sec.get("columns", []):
             old_label = col.split("[")[-1].replace("]", "").strip() if "[" in col else col
             old_label = _r.sub(r'\(?\s*out\s+of\s+[\d.]+\s*\)?', '', old_label, flags=_r.IGNORECASE).strip().strip("()")
-            
+
             cfg_for_col = col_cfg.get(col, {})
             label = cfg_for_col.get("label", old_label)
             if not label:
@@ -1261,21 +1206,159 @@ def _compute_class_stats(row, cfg):
 
             col_raw_scores = [_col_score(r) for _, r in batch_df.iterrows()]
             col_scores_pct = [_col_pct(r) for _, r in batch_df.iterrows()]
-            
-            my_col_pct = _col_pct(row)
-            col_rank   = sum(1 for p in col_scores_pct if p > my_col_pct) + 1
-            mod_p90    = np.percentile(col_raw_scores, p90_th)
-            mod_p50    = np.percentile(col_raw_scores, p50_th)
 
+            mod_p90 = np.percentile(col_raw_scores, p90_th)
+            mod_p50 = np.percentile(col_raw_scores, p50_th)
             bm_val = {"P90": round(float(mod_p90), 1), "P50": round(float(mod_p50), 1)}
-            module_pcts[label] = round((1 - (col_rank - 1) / total_students) * 100, 1)
-            module_pcts[f"{sec_title}::{label}"] = module_pcts[label]
+
+            col_data.append({
+                "col": col, "label": label, "max_s": max_s,
+                "col_scores_pct": col_scores_pct, "bm_val": bm_val,
+                "sec_title": sec_title, "sec_name": sec_name,
+            })
+
+        parsed_sections.append({
+            "sec": sec, "sec_title": sec_title, "sec_name": sec_name,
+            "batch_scores": batch_scores,
+            "sec_p90": round(float(sec_p90), 1),
+            "sec_p50": round(float(sec_p50), 1),
+            "sec_avg": sec_avg,
+            "col_data": col_data,
+        })
+
+    def _row_total(r):
+        scored, mx = 0.0, 0.0
+        for sec in marks_sections:
+            _, ts, tm = _parse_marks_cols(r, sec)
+            scored += ts; mx += tm
+        return round((scored / mx) * 100, 2) if mx > 0 else 0.0
+
+    all_totals = [_row_total(r) for _, r in batch_df.iterrows()]
+    combined_class_avg = round(sum(all_totals) / total_students, 1)
+
+    return {
+        "total_students": total_students,
+        "parsed_sections": parsed_sections,
+        "all_totals": all_totals,
+        "combined_class_avg": combined_class_avg,
+        "marks_sections": marks_sections,
+        "selected_tbl": cfg.get("mi_benchmark_table", "All Marks Tables (Combined)"),
+    }
+
+
+def _compute_class_stats(row, cfg):
+    """
+    Compute class-relative stats from the batch DataFrame with high-performance caching.
+    Returns: (rank, total_percentile, class_avg, module_pcts, module_benchmarks, table_benchmarks)
+      - rank             : int   — student rank (1 = highest scorer)
+      - total_percentile : float — percentile based on TOTAL marks across all modules (or selected table)
+      - class_avg        : float — class average percentage
+      - module_pcts      : dict  — {label: percentile} per subject column
+      - module_benchmarks: dict  — {(sec_title, label): {"P90": ..., "P50": ...}} + fallback {label: ...}
+      - table_benchmarks : dict  — {sec_title: {"P90": ..., "P50": ..., "rank": ..., "percentile": ..., "score": ..., "max": ..., "class_avg": ...}}
+    Returns (None, None, None, None, None, None) if no batch data.
+    """
+    batch_df = cfg.get("_batch_df")
+    if batch_df is None or len(batch_df) < 2:
+        return None, None, None, None, None, None
+
+    cohort_cache = cfg.get("_cohort_cache")
+    if cohort_cache is None:
+        with _cohort_cache_lock:
+            cohort_cache = cfg.get("_cohort_cache")
+            if cohort_cache is None:
+                cohort_cache = precompute_cohort_cache(batch_df, cfg)
+                cfg["_cohort_cache"] = cohort_cache
+
+    if not cohort_cache:
+        return None, None, None, None, None, None
+
+    # Row memoization: avoids re-computing when called multiple times per report
+    row_key = row.name if hasattr(row, 'name') and row.name is not None else tuple(str(v) for v in row.values)
+    row_cache = cfg.setdefault("_row_stats_cache", {})
+    if row_key in row_cache:
+        return row_cache[row_key]
+
+    total_students = cohort_cache["total_students"]
+    parsed_sections = cohort_cache["parsed_sections"]
+
+    table_benchmarks = {}
+    for ps in parsed_sections:
+        sec = ps["sec"]
+        _, my_sec_scored, my_sec_max = _parse_marks_cols(row, sec)
+        batch_scores = ps["batch_scores"]
+        sec_rank = sum(1 for s in batch_scores if s > my_sec_scored) + 1
+        sec_pct  = round((1 - (sec_rank - 1) / total_students) * 100, 1)
+
+        tbl_data = {
+            "P90": ps["sec_p90"],
+            "P50": ps["sec_p50"],
+            "rank": sec_rank,
+            "percentile": sec_pct,
+            "score": my_sec_scored,
+            "max": my_sec_max,
+            "class_avg": ps["sec_avg"],
+            "title": ps["sec_title"],
+            "name": ps["sec_name"],
+        }
+        table_benchmarks[ps["sec_title"]] = tbl_data
+        table_benchmarks[ps["sec_name"]]  = tbl_data
+
+    # Combined or Selected-Table Overall Ranking
+    selected_tbl = cohort_cache["selected_tbl"]
+    if selected_tbl and selected_tbl != "All Marks Tables (Combined)" and selected_tbl in table_benchmarks:
+        st_data   = table_benchmarks[selected_tbl]
+        rank      = st_data["rank"]
+        total_pct = st_data["percentile"]
+        class_avg = st_data["class_avg"]
+    else:
+        scored, mx = 0.0, 0.0
+        for sec in cohort_cache["marks_sections"]:
+            _, ts, tm = _parse_marks_cols(row, sec)
+            scored += ts; mx += tm
+        my_total   = round((scored / mx) * 100, 2) if mx > 0 else 0.0
+        all_totals = cohort_cache["all_totals"]
+        rank       = sum(1 for t in all_totals if t > my_total) + 1
+        total_pct  = round((1 - (rank - 1) / total_students) * 100, 1)
+        class_avg  = cohort_cache["combined_class_avg"]
+
+    # Per-module percentiles
+    module_pcts = {}
+    module_benchmarks = {}
+    for ps in parsed_sections:
+        for cd in ps["col_data"]:
+            col = cd["col"]
+            label = cd["label"]
+            max_s = cd["max_s"]
+
+            raw = str(row[col]).strip() if col in row.index else "nan"
+            if raw.lower() in ("nan", "na", "", "n/a"):
+                sc = 0.0
+            else:
+                try:
+                    sc = float(raw)
+                except ValueError:
+                    sc = 0.0
+
+            my_col_pct = round((sc / max_s) * 100, 2)
+            col_scores_pct = cd["col_scores_pct"]
+            col_rank   = sum(1 for p in col_scores_pct if p > my_col_pct) + 1
+
+            pct_val = round((1 - (col_rank - 1) / total_students) * 100, 1)
+            bm_val = cd["bm_val"]
+            sec_title = cd["sec_title"]
+            sec_name = cd["sec_name"]
+
+            module_pcts[label] = pct_val
+            module_pcts[f"{sec_title}::{label}"] = pct_val
             module_benchmarks[f"{sec_title}::{label}"] = bm_val
             module_benchmarks[f"{sec_name}::{label}"]  = bm_val
             module_benchmarks[label] = bm_val
             module_benchmarks[col]   = bm_val
 
-    return rank, total_pct, class_avg, module_pcts, module_benchmarks, table_benchmarks
+    result = (rank, total_pct, class_avg, module_pcts, module_benchmarks, table_benchmarks)
+    row_cache[row_key] = result
+    return result
 
 
 def render_marks_motivation(story, row, cfg, styles, groq_client=None):

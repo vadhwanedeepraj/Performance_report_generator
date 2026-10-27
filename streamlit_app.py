@@ -10,13 +10,14 @@ import os
 import re
 import json
 import zipfile
+import base64
 import streamlit as st
 import pandas as pd
 from datetime import datetime
 from report_engine import (
     build_single_report, build_all_reports,
     clean_label, to_numeric_rating, grade_for,
-    compute_student_data,
+    compute_student_data, precompute_cohort_cache,
 )
 from audit_logger import (
     log_audit_event, get_audit_log_bytes, get_audit_dataframe,
@@ -163,6 +164,35 @@ def safe_filename(val):
     except (ValueError, OverflowError):
         pass
     return re.sub(r'[^A-Za-z0-9_\-]', '_', s) or "report"
+
+
+def render_pdf_preview(pdf_bytes: bytes, file_name: str, key_suffix: str = "prev"):
+    """
+    Renders an in-browser interactive PDF canvas with an accompanying download button.
+    Allows educators and mentors to visually review reports with zero required downloads.
+    """
+    b64_pdf = base64.b64encode(pdf_bytes).decode("utf-8")
+    col_dl, col_info = st.columns([1, 2])
+    with col_dl:
+        st.download_button(
+            label=f"⬇️ Download {file_name}",
+            data=pdf_bytes,
+            file_name=file_name,
+            mime="application/pdf",
+            key=f"dl_pdf_{key_suffix}",
+            width="stretch"
+        )
+    with col_info:
+        st.caption(f"📄 **Live Interactive Document:** `{file_name}` ({len(pdf_bytes) / 1024:.1f} KB)")
+
+    pdf_display = (
+        f'<div style="margin-top: 10px; margin-bottom: 20px; border-radius: 8px; overflow: hidden; '
+        f'border: 1.5px solid #CBD5E1; box-shadow: 0 4px 12px rgba(0,0,0,0.06);">'
+        f'<iframe src="data:application/pdf;base64,{b64_pdf}#toolbar=1&navpanes=0" '
+        f'width="100%" height="820" type="application/pdf"></iframe>'
+        f'</div>'
+    )
+    st.markdown(pdf_display, unsafe_allow_html=True)
 
 
 def _validate_csv(uploaded_file) -> tuple[bool, str]:
@@ -1766,13 +1796,8 @@ with tab_design:
                         first_row = _prev_df.iloc[0]
                         gc = get_groq_client(api_key) if enable_ai else None
                         pdf_bytes = build_single_report(first_row, preview_cfg, gc, st.session_state.logo_bytes)
-
-                        base64_pdf = base64.b64encode(pdf_bytes).decode("utf-8")
-                        pdf_display = (
-                            f'<iframe src="data:application/pdf;base64,{base64_pdf}" '
-                            f'width="100%" height="900" type="application/pdf"></iframe>'
-                        )
-                        st.markdown(pdf_display, unsafe_allow_html=True)
+                        st.success("✅ Live Preview Generated Successfully!")
+                        render_pdf_preview(pdf_bytes, f"LIVE_PREVIEW_{safe_filename(str(first_row.iloc[0]))}.pdf", "tab2_live")
 
                     except Exception as e:
                         import traceback
@@ -1886,15 +1911,22 @@ with tab_gen:
                         gc = get_groq_client(api_key) if enable_ai else None
                         pb = build_single_report(gen_df.iloc[p_idx], cfg, gc, st.session_state.logo_bytes)
                         fname_val = str(gen_df.iloc[p_idx].get(pdf_col, sel_s))
-                        st.success(f"✅ Preview ready for **{sel_s}**")
-                        dl_prev = st.download_button("⬇️ Download Preview PDF", pb,
-                                           f"{safe_filename(fname_val)}.pdf",
-                                           "application/pdf", key="g_prev_dl")
-                        if dl_prev:
-                            sn, en, extra_notes = get_student_identity_vals(gen_df.iloc[p_idx], st.session_state.identity_cols, fallback_name=sel_s)
-                            log_audit_event("Downloaded (Preview)", report_title_sb, sn, en, f"PREV_{safe_filename(fname_val)}")
+                        st.session_state["tab3_preview_data"] = {
+                            "bytes": pb,
+                            "fname": f"{safe_filename(fname_val)}.pdf",
+                            "student": sel_s,
+                            "key": f"single_{p_idx}"
+                        }
                     except Exception as e:
                         st.error(f"❌ {e}")
+
+            if "tab3_preview_data" in st.session_state:
+                prev_d = st.session_state["tab3_preview_data"]
+                st.success(f"✅ Preview ready for **{prev_d['student']}**")
+                render_pdf_preview(prev_d["bytes"], prev_d["fname"], prev_d["key"])
+                if st.button("✕ Close Preview", key="btn_close_tab3_prev", type="secondary"):
+                    del st.session_state["tab3_preview_data"]
+                    st.rerun()
 
         st.markdown("---")
         st.markdown(f"### 🚀 Generate All **{len(gen_df)}** Learner Report Cards")
@@ -1992,18 +2024,24 @@ with tab_gen:
                     with st.spinner("Generating preview PDF..."):
                         _prev_bytes = build_single_report(_prev_row, cfg, _prev_gc, st.session_state.logo_bytes)
                     _prev_name = str(_prev_row.get(name_col, "Preview")).strip()
-                    st.success(f"✅ Preview generated for **{_prev_name}**")
-                    st.download_button(
-                        label=f"⬇️ Download Preview — {_prev_name}.pdf",
-                        data=_prev_bytes,
-                        file_name=f"PREVIEW_{safe_filename(_prev_name)}.pdf",
-                        mime="application/pdf",
-                        key="btn_dl_preview_first",
-                    )
+                    st.session_state["tab3_first_preview_data"] = {
+                        "bytes": _prev_bytes,
+                        "fname": f"PREVIEW_{safe_filename(_prev_name)}.pdf",
+                        "student": _prev_name,
+                        "key": "tab3_first"
+                    }
                 except Exception as _prev_e:
                     st.error(f"❌ Preview failed: {_prev_e}")
                     import traceback
                     st.code(traceback.format_exc())
+
+            if "tab3_first_preview_data" in st.session_state:
+                _fpd = st.session_state["tab3_first_preview_data"]
+                st.success(f"✅ Preview generated for **{_fpd['student']}**")
+                render_pdf_preview(_fpd["bytes"], _fpd["fname"], _fpd["key"])
+                if st.button("✕ Close Preview", key="btn_close_tab3_first_prev", type="secondary"):
+                    del st.session_state["tab3_first_preview_data"]
+                    st.rerun()
 
         # Guard: require at least one enabled section before allowing generation
         _has_sections = bool(all_sections)
@@ -2063,6 +2101,9 @@ with tab_gen:
                     "_mi_label": _mi_label, "_is_shortlisted": _is_shortlisted,
                     "_mi_schedule": _mi_schedule,
                 })
+
+            # ── Precompute cohort benchmarks for O(1) thread worker lookups ───
+            precompute_cohort_cache(gen_df, cfg)
 
             # ── Parallel PDF generation ──────────────────────────────────────
             from concurrent.futures import ThreadPoolExecutor, as_completed
