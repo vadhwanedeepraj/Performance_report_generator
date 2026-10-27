@@ -166,34 +166,6 @@ def safe_filename(val):
     return re.sub(r'[^A-Za-z0-9_\-]', '_', s) or "report"
 
 
-def render_pdf_preview(pdf_bytes: bytes, file_name: str, key_suffix: str = "prev"):
-    """
-    Renders an in-browser interactive PDF canvas with an accompanying download button.
-    Allows educators and mentors to visually review reports with zero required downloads.
-    """
-    b64_pdf = base64.b64encode(pdf_bytes).decode("utf-8")
-    col_dl, col_info = st.columns([1, 2])
-    with col_dl:
-        st.download_button(
-            label=f"⬇️ Download {file_name}",
-            data=pdf_bytes,
-            file_name=file_name,
-            mime="application/pdf",
-            key=f"dl_pdf_{key_suffix}",
-            width="stretch"
-        )
-    with col_info:
-        st.caption(f"📄 **Live Interactive Document:** `{file_name}` ({len(pdf_bytes) / 1024:.1f} KB)")
-
-    pdf_display = (
-        f'<div style="margin-top: 10px; margin-bottom: 20px; border-radius: 8px; overflow: hidden; '
-        f'border: 1.5px solid #CBD5E1; box-shadow: 0 4px 12px rgba(0,0,0,0.06);">'
-        f'<iframe src="data:application/pdf;base64,{b64_pdf}#toolbar=1&navpanes=0" '
-        f'width="100%" height="820" type="application/pdf"></iframe>'
-        f'</div>'
-    )
-    st.markdown(pdf_display, unsafe_allow_html=True)
-
 
 def _validate_csv(uploaded_file) -> tuple[bool, str]:
     """
@@ -1797,7 +1769,14 @@ with tab_design:
                         gc = get_groq_client(api_key) if enable_ai else None
                         pdf_bytes = build_single_report(first_row, preview_cfg, gc, st.session_state.logo_bytes)
                         st.success("✅ Live Preview Generated Successfully!")
-                        render_pdf_preview(pdf_bytes, f"LIVE_PREVIEW_{safe_filename(str(first_row.iloc[0]))}.pdf", "tab2_live")
+                        st.download_button(
+                            label=f"⬇️ Download Live Preview PDF ({safe_filename(str(first_row.iloc[0]))}.pdf — {len(pdf_bytes) / 1024:.1f} KB)",
+                            data=pdf_bytes,
+                            file_name=f"LIVE_PREVIEW_{safe_filename(str(first_row.iloc[0]))}.pdf",
+                            mime="application/pdf",
+                            key="btn_dl_live_prev",
+                            type="primary",
+                        )
 
                     except Exception as e:
                         import traceback
@@ -1923,10 +1902,20 @@ with tab_gen:
             if "tab3_preview_data" in st.session_state:
                 prev_d = st.session_state["tab3_preview_data"]
                 st.success(f"✅ Preview ready for **{prev_d['student']}**")
-                render_pdf_preview(prev_d["bytes"], prev_d["fname"], prev_d["key"])
-                if st.button("✕ Close Preview", key="btn_close_tab3_prev", type="secondary"):
-                    del st.session_state["tab3_preview_data"]
-                    st.rerun()
+                col_dl, col_cl = st.columns([2.5, 1])
+                with col_dl:
+                    st.download_button(
+                        label=f"⬇️ Download Preview: {prev_d['student']} ({len(prev_d['bytes']) / 1024:.1f} KB)",
+                        data=prev_d["bytes"],
+                        file_name=prev_d["fname"],
+                        mime="application/pdf",
+                        key="btn_dl_tab3_preview",
+                        type="primary",
+                    )
+                with col_cl:
+                    if st.button("✕ Close Preview", key="btn_close_tab3_prev", type="secondary"):
+                        del st.session_state["tab3_preview_data"]
+                        st.rerun()
 
         st.markdown("---")
         st.markdown(f"### 🚀 Generate All **{len(gen_df)}** Learner Report Cards")
@@ -2038,10 +2027,20 @@ with tab_gen:
             if "tab3_first_preview_data" in st.session_state:
                 _fpd = st.session_state["tab3_first_preview_data"]
                 st.success(f"✅ Preview generated for **{_fpd['student']}**")
-                render_pdf_preview(_fpd["bytes"], _fpd["fname"], _fpd["key"])
-                if st.button("✕ Close Preview", key="btn_close_tab3_first_prev", type="secondary"):
-                    del st.session_state["tab3_first_preview_data"]
-                    st.rerun()
+                col_dl, col_cl = st.columns([2.5, 1])
+                with col_dl:
+                    st.download_button(
+                        label=f"⬇️ Download Preview ({_fpd['student']} — {len(_fpd['bytes']) / 1024:.1f} KB)",
+                        data=_fpd["bytes"],
+                        file_name=_fpd["fname"],
+                        mime="application/pdf",
+                        key="btn_dl_tab3_first_prev",
+                        type="primary",
+                    )
+                with col_cl:
+                    if st.button("✕ Close Preview", key="btn_close_tab3_first_prev", type="secondary"):
+                        del st.session_state["tab3_first_preview_data"]
+                        st.rerun()
 
         # Guard: require at least one enabled section before allowing generation
         _has_sections = bool(all_sections)
