@@ -921,10 +921,11 @@ def render_marks_table(story, row, section, cfg, styles):
         return
 
     # Compute class stats to get benchmarks
-    _, _, _, _, module_benchmarks = _compute_class_stats(row, cfg)
+    _, _, _, _, module_benchmarks, table_benchmarks = _compute_class_stats(row, cfg)
     
     # Dynamic Section Title — customizable via UI/template, falls back to section name or default
     table_title = section.get("title") or section.get("name") or "Module-wise Performance"
+    sec_name = section.get("name") or table_title
     story.extend(_section_title(table_title, styles, pc))
     
     default_note = (
@@ -942,20 +943,30 @@ def render_marks_table(story, row, section, cfg, styles):
 
     td = [["Module", "Your Score", "Readiness Status", "Benchmark\nScore"]]
     has_max = any(it["max"] is not None for it in items)
+    p90_th = float(cfg.get("benchmark_strong", 90))
+    p50_th = float(cfg.get("benchmark_revision", 50))
 
     for it in items:
         score = it["score"]
         max_s = it["max"]
         label = it["label"]
         
-        benchmark_data = module_benchmarks.get(label) if module_benchmarks else None
+        benchmark_data = None
+        if module_benchmarks:
+            benchmark_data = (
+                module_benchmarks.get(f"{table_title}::{label}") or
+                module_benchmarks.get(f"{sec_name}::{label}") or
+                module_benchmarks.get(label) or
+                module_benchmarks.get(it.get("col"))
+            )
+
         if benchmark_data:
             benchmark = benchmark_data["P90"]
             p50_benchmark = benchmark_data["P50"]
         else:
             # Fallback if no benchmark available (e.g. no batch data)
-            benchmark = (max_s * 0.9) if max_s else 0
-            p50_benchmark = (max_s * 0.5) if max_s else 0
+            benchmark = round(max_s * (p90_th / 100.0), 1) if max_s else 0
+            p50_benchmark = round(max_s * (p50_th / 100.0), 1) if max_s else 0
         
         # Determine Readiness Status + colour
         if score >= benchmark:
@@ -995,6 +1006,39 @@ def render_marks_table(story, row, section, cfg, styles):
             safe_paragraph(f"<b>{bm_txt}</b>", styles["cell"]),
         ])
 
+    # ── Table-wise Total & Benchmark Row ──────────────────────
+    tbl_bm = None
+    if table_benchmarks:
+        tbl_bm = table_benchmarks.get(table_title) or table_benchmarks.get(sec_name)
+
+    if tbl_bm:
+        tbl_p90 = tbl_bm["P90"]
+        tbl_p50 = tbl_bm["P50"]
+    else:
+        tbl_p90 = round(total_max * (p90_th / 100.0), 1) if total_max else 0
+        tbl_p50 = round(total_max * (p50_th / 100.0), 1) if total_max else 0
+
+    if total_scored >= tbl_p90:
+        tbl_st_label = "Strong Proficiency"
+        tbl_st_color = "#16a34a"
+    elif total_scored >= tbl_p50:
+        tbl_st_label = "Revision Recommended"
+        tbl_st_color = "#ea580c"
+    else:
+        tbl_st_label = "Foundational Gap"
+        tbl_st_color = "#dc2626"
+
+    tbl_bm_txt = str(int(tbl_p90)) if tbl_p90 == int(tbl_p90) else f"{tbl_p90:.1f}"
+    tbl_sc_txt = str(int(total_scored)) if total_scored == int(total_scored) else f"{total_scored:.1f}"
+    tbl_mx_txt = str(int(total_max)) if total_max == int(total_max) else f"{total_max:.1f}"
+
+    td.append([
+        safe_paragraph("<b>Table Total</b>", styles["cell_bold"]),
+        safe_paragraph(f"<font size='8'><b>{tbl_sc_txt}</b> / {tbl_mx_txt}</font>", styles["cell_bold"]),
+        safe_paragraph(f"<font color='{tbl_st_color}'><b>{tbl_st_label}</b></font>", styles["cell_bold"]),
+        safe_paragraph(f"<b>{tbl_bm_txt}</b>", styles["cell_bold"]),
+    ])
+
     cw = [PAGE_W*0.22, PAGE_W*0.33, PAGE_W*0.25, PAGE_W*0.20]
     t  = Table(td, colWidths=cw)
     ts = corporate_table_style(pc)
@@ -1002,6 +1046,8 @@ def render_marks_table(story, row, section, cfg, styles):
     ts.add("VALIGN", (0, 0), (-1, -1), "MIDDLE")
     ts.add("LEFTPADDING", (0, 0), (-1, -1), 6)
     ts.add("RIGHTPADDING", (0, 0), (-1, -1), 6)
+    ts.add("LINEABOVE",  (0, -1), (-1, -1), 1.2, colors.HexColor(pc))
+    ts.add("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#F1F5F9"))
     t.setStyle(ts)
     story.append(t)
     story.append(Spacer(1, 4))
@@ -1094,20 +1140,21 @@ def render_marks_analysis(story, row, cfg, styles):
 def _compute_class_stats(row, cfg):
     """
     Compute class-relative stats from the batch DataFrame.
-    Returns: (rank, total_percentile, class_avg, module_pcts, module_benchmarks)
+    Returns: (rank, total_percentile, class_avg, module_pcts, module_benchmarks, table_benchmarks)
       - rank             : int   — student rank (1 = highest scorer)
-      - total_percentile : float — percentile based on TOTAL marks across all modules
+      - total_percentile : float — percentile based on TOTAL marks across all modules (or selected table)
       - class_avg        : float — class average percentage
       - module_pcts      : dict  — {label: percentile} per subject column
-      - module_benchmarks: dict  — {label: float} 90th percentile raw score
-    Returns (None, None, None, None, None) if no batch data.
+      - module_benchmarks: dict  — {(sec_title, label): {"P90": ..., "P50": ...}} + fallback {label: ...}
+      - table_benchmarks : dict  — {sec_title: {"P90": ..., "P50": ..., "rank": ..., "percentile": ..., "score": ..., "max": ..., "class_avg": ...}}
+    Returns (None, None, None, None, None, None) if no batch data.
     """
     import re as _r
     import numpy as np
 
     batch_df = cfg.get("_batch_df")
     if batch_df is None or len(batch_df) < 2:
-        return None, None, None, None, None
+        return None, None, None, None, None, None
 
     marks_sections = [
         s for s in cfg.get("sections", [])
@@ -1116,32 +1163,74 @@ def _compute_class_stats(row, cfg):
         and s.get("enabled", True)
     ]
     if not marks_sections:
-        return None, None, None, None, None
+        return None, None, None, None, None, None
 
     total_students = len(batch_df)
+    p90_th = float(cfg.get("benchmark_strong", 90))
+    p50_th = float(cfg.get("benchmark_revision", 50))
 
-    # ── Total score per row ───────────────────────────────────────
-    def _row_total(r):
-        scored, mx = 0.0, 0.0
-        for sec in marks_sections:
-            _, ts, tm = _parse_marks_cols(r, sec)
-            scored += ts; mx += tm
-        return round((scored / mx) * 100, 2) if mx > 0 else 0.0
+    # ── Table-wise Benchmarks & Individual Table Analysis ─────────
+    table_benchmarks = {}
+    for sec in marks_sections:
+        sec_title = sec.get("title") or sec.get("name") or "Module-wise Performance"
+        sec_name  = sec.get("name") or sec_title
+        
+        batch_table_scores = []
+        for _, brow in batch_df.iterrows():
+            _, ts, tm = _parse_marks_cols(brow, sec)
+            batch_table_scores.append(ts)
+        
+        _, my_sec_scored, my_sec_max = _parse_marks_cols(row, sec)
+        
+        sec_p90 = np.percentile(batch_table_scores, p90_th) if batch_table_scores else (my_sec_max * (p90_th / 100.0))
+        sec_p50 = np.percentile(batch_table_scores, p50_th) if batch_table_scores else (my_sec_max * (p50_th / 100.0))
+        sec_rank = sum(1 for s in batch_table_scores if s > my_sec_scored) + 1
+        sec_pct  = round((1 - (sec_rank - 1) / total_students) * 100, 1)
+        sec_avg  = round(sum(batch_table_scores) / total_students, 1) if total_students > 0 else 0.0
 
-    all_totals = [_row_total(r) for _, r in batch_df.iterrows()]
-    my_total   = _row_total(row)
+        tbl_data = {
+            "P90": round(float(sec_p90), 1),
+            "P50": round(float(sec_p50), 1),
+            "rank": sec_rank,
+            "percentile": sec_pct,
+            "score": my_sec_scored,
+            "max": my_sec_max,
+            "class_avg": sec_avg,
+            "title": sec_title,
+            "name": sec_name,
+        }
+        table_benchmarks[sec_title] = tbl_data
+        table_benchmarks[sec_name]  = tbl_data
 
-    # Tie-safe rank: count students who scored STRICTLY higher than current student.
-    # This avoids the .index() bug where tied scores all resolve to the same rank.
-    rank       = sum(1 for t in all_totals if t > my_total) + 1
-    total_pct  = round((1 - (rank - 1) / total_students) * 100, 1)
-    class_avg  = round(sum(all_totals) / total_students, 1)
+    # ── Combined or Selected-Table Overall Ranking ─────────────────
+    selected_tbl = cfg.get("mi_benchmark_table", "All Marks Tables (Combined)")
+    if selected_tbl and selected_tbl != "All Marks Tables (Combined)" and selected_tbl in table_benchmarks:
+        st_data   = table_benchmarks[selected_tbl]
+        rank      = st_data["rank"]
+        total_pct = st_data["percentile"]
+        class_avg = st_data["class_avg"]
+    else:
+        # Default: aggregate total across all marks tables
+        def _row_total(r):
+            scored, mx = 0.0, 0.0
+            for sec in marks_sections:
+                _, ts, tm = _parse_marks_cols(r, sec)
+                scored += ts; mx += tm
+            return round((scored / mx) * 100, 2) if mx > 0 else 0.0
+
+        all_totals = [_row_total(r) for _, r in batch_df.iterrows()]
+        my_total   = _row_total(row)
+        rank       = sum(1 for t in all_totals if t > my_total) + 1
+        total_pct  = round((1 - (rank - 1) / total_students) * 100, 1)
+        class_avg  = round(sum(all_totals) / total_students, 1)
 
     # ── Per-module percentile and benchmark ───────────────────────
     module_pcts = {}
     module_benchmarks = {}
     for sec in marks_sections:
-        col_cfg = sec.get("col_cfg", {})
+        sec_title = sec.get("title") or sec.get("name") or "Module-wise Performance"
+        sec_name  = sec.get("name") or sec_title
+        col_cfg   = sec.get("col_cfg", {})
         for col in sec.get("columns", []):
             old_label = col.split("[")[-1].replace("]", "").strip() if "[" in col else col
             old_label = _r.sub(r'\(?\s*out\s+of\s+[\d.]+\s*\)?', '', old_label, flags=_r.IGNORECASE).strip().strip("()")
@@ -1154,11 +1243,9 @@ def _compute_class_stats(row, cfg):
             m = _r.search(r'out\s+of\s+([\d.]+)', col, _r.IGNORECASE)
             max_from_header = float(m.group(1)) if m else None
             max_s = float(cfg_for_col.get("max")) if cfg_for_col.get("max") else max_from_header
-            
             if not max_s or max_s <= 0:
                 continue
 
-            # Score for each student in this column
             def _col_score(r, c=col):
                 raw = str(r[c]).strip() if c in r.index else "nan"
                 if raw.lower() in ("nan", "na", "", "n/a"):
@@ -1176,17 +1263,19 @@ def _compute_class_stats(row, cfg):
             col_scores_pct = [_col_pct(r) for _, r in batch_df.iterrows()]
             
             my_col_pct = _col_pct(row)
-            # Tie-safe rank: count students who scored STRICTLY higher per-module
             col_rank   = sum(1 for p in col_scores_pct if p > my_col_pct) + 1
-            module_pcts[label] = round((1 - (col_rank - 1) / total_students) * 100, 1)
-            
-            p90_th = cfg.get("benchmark_strong", 90)
-            p50_th = cfg.get("benchmark_revision", 50)
-            p90 = np.percentile(col_raw_scores, p90_th)
-            p50 = np.percentile(col_raw_scores, p50_th)
-            module_benchmarks[label] = {"P90": round(p90, 1), "P50": round(p50, 1)}
+            mod_p90    = np.percentile(col_raw_scores, p90_th)
+            mod_p50    = np.percentile(col_raw_scores, p50_th)
 
-    return rank, total_pct, class_avg, module_pcts, module_benchmarks
+            bm_val = {"P90": round(float(mod_p90), 1), "P50": round(float(mod_p50), 1)}
+            module_pcts[label] = round((1 - (col_rank - 1) / total_students) * 100, 1)
+            module_pcts[f"{sec_title}::{label}"] = module_pcts[label]
+            module_benchmarks[f"{sec_title}::{label}"] = bm_val
+            module_benchmarks[f"{sec_name}::{label}"]  = bm_val
+            module_benchmarks[label] = bm_val
+            module_benchmarks[col]   = bm_val
+
+    return rank, total_pct, class_avg, module_pcts, module_benchmarks, table_benchmarks
 
 
 def render_marks_motivation(story, row, cfg, styles, groq_client=None):
@@ -1200,13 +1289,18 @@ def render_marks_motivation(story, row, cfg, styles, groq_client=None):
     all_items = []
     total_scored, total_max = 0.0, 0.0
     marks_table_count = 0
-    for sec in cfg.get("sections", []):
-        if not isinstance(sec, dict):          # skip malformed entries
-            continue
-        if not sec.get("enabled", True) or sec.get("type") != "marks_table":
-            continue
+    marks_sections = [
+        s for s in cfg.get("sections", [])
+        if isinstance(s, dict) and s.get("enabled", True) and s.get("type") == "marks_table"
+    ]
+    for sec in marks_sections:
         marks_table_count += 1
         items, ts, tm = _parse_marks_cols(row, sec)
+        sec_title = sec.get("title") or sec.get("name") or "Module-wise Performance"
+        sec_name  = sec.get("name") or sec_title
+        for it in items:
+            it["sec_title"] = sec_title
+            it["sec_name"]  = sec_name
         all_items.extend(items)
         total_scored += ts
         total_max    += tm
@@ -1217,11 +1311,25 @@ def render_marks_motivation(story, row, cfg, styles, groq_client=None):
     if not all_items or total_max == 0:
         return
 
-    # ── Class statistics (4-value return) ─────────────────────────
-    rank, total_percentile, class_avg, module_pcts, module_benchmarks = _compute_class_stats(row, cfg)
+    # ── Class statistics (6-value return) ─────────────────────────
+    rank, total_percentile, class_avg, module_pcts, module_benchmarks, table_benchmarks = _compute_class_stats(row, cfg)
     
-    # Use percentile if available, fallback to raw % if not.
-    eval_metric = total_percentile if (total_percentile is not None) else round((total_scored / total_max) * 100, 1)
+    selected_tbl = cfg.get("mi_benchmark_table", "All Marks Tables (Combined)")
+    is_table_specific = (
+        selected_tbl and 
+        selected_tbl != "All Marks Tables (Combined)" and 
+        table_benchmarks and 
+        selected_tbl in table_benchmarks
+    )
+
+    if is_table_specific:
+        st_info = table_benchmarks[selected_tbl]
+        tbl_scored = st_info["score"]
+        tbl_max = st_info["max"]
+        eval_metric = total_percentile if (total_percentile is not None) else (round((tbl_scored / tbl_max) * 100, 1) if tbl_max > 0 else 0.0)
+    else:
+        # Use percentile if available, fallback to raw % if not.
+        eval_metric = total_percentile if (total_percentile is not None) else round((total_scored / total_max) * 100, 1)
 
     # BUG-03 FIX: use the user-configured pass threshold for standing labels
     # instead of hardcoded 90/75/50 breakpoints.
@@ -1255,11 +1363,20 @@ def render_marks_motivation(story, row, cfg, styles, groq_client=None):
     
     td_overall = [
         [safe_paragraph("<b>Overall Score</b>", styles["cell_bold"]), safe_paragraph(f"{total_scored:.0f} / {total_max:.0f}", styles["cell"])],
-        [safe_paragraph("<b>Your Standing</b>", styles["cell_bold"]), safe_paragraph(standing, styles["cell"])],
     ]
+    if is_table_specific:
+        td_overall.append([
+            safe_paragraph(f"<b>{rl_safe(selected_tbl)} Score</b>", styles["cell_bold"]),
+            safe_paragraph(f"{tbl_scored:.0f} / {tbl_max:.0f} (Percentile: {total_percentile:.1f}%)", styles["cell"])
+        ])
+    td_overall.append(
+        [safe_paragraph("<b>Your Standing</b>", styles["cell_bold"]), safe_paragraph(standing, styles["cell"])]
+    )
     if enable_mock:
+        elig_label = MOCK_PDF_LABEL_SHORTLISTED if is_shortlisted else MOCK_PDF_LABEL_REVISION
+        basis_note = f" (Based on {selected_tbl})" if is_table_specific else ""
         td_overall.append(
-            [safe_paragraph("<b>Mock Interview Eligibility</b>", styles["cell_bold"]), safe_paragraph(MOCK_PDF_LABEL_SHORTLISTED if is_shortlisted else MOCK_PDF_LABEL_REVISION, styles["cell"])]
+            [safe_paragraph(f"<b>Mock Interview Eligibility{basis_note}</b>", styles["cell_bold"]), safe_paragraph(elig_label, styles["cell"])]
         )
     t_overall = Table(td_overall, colWidths=[PAGE_W*0.35, PAGE_W*0.65])
     t_overall.setStyle(accent_table_style(C_GOLD))
@@ -1282,25 +1399,39 @@ def render_marks_motivation(story, row, cfg, styles, groq_client=None):
     revision = []
     gaps = []
 
+    p90_th = float(cfg.get("benchmark_strong", 90))
+    p50_th = float(cfg.get("benchmark_revision", 50))
+
     for it in all_items:
         score = it["score"]
         label = it["label"]
         max_s = it["max"]
+        sec_title = it.get("sec_title", "")
+        sec_name  = it.get("sec_name", "")
         
-        benchmark_data = module_benchmarks.get(label) if module_benchmarks else None
+        benchmark_data = None
+        if module_benchmarks:
+            benchmark_data = (
+                module_benchmarks.get(f"{sec_title}::{label}") or
+                module_benchmarks.get(f"{sec_name}::{label}") or
+                module_benchmarks.get(label) or
+                module_benchmarks.get(it.get("col"))
+            )
+
         if benchmark_data:
             benchmark = benchmark_data["P90"]
             p50_benchmark = benchmark_data["P50"]
         else:
-            benchmark = (max_s * 0.9) if max_s else 0
-            p50_benchmark = (max_s * 0.5) if max_s else 0
+            benchmark = round(max_s * (p90_th / 100.0), 1) if max_s else 0
+            p50_benchmark = round(max_s * (p50_th / 100.0), 1) if max_s else 0
         
+        display_label = f"{label} ({sec_title})" if len(marks_sections) > 1 and sec_title else label
         if score >= benchmark:
-            strong.append(label)
+            strong.append(display_label)
         elif score >= p50_benchmark:
-            revision.append(label)
+            revision.append(display_label)
         else:
-            gaps.append(label)
+            gaps.append(display_label)
 
     if gaps:
         story.append(safe_paragraph(f"• <b>Foundational Gaps:</b> {', '.join(gaps)}", styles["body"]))

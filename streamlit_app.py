@@ -135,6 +135,20 @@ _ss("audit_log_events", {
     "Downloaded (Batch ZIP)",
     "Mock Interview Status Update",
 })
+# ── Table-wise Benchmark & Mock Interview Basis ───────────────
+_ss("mi_benchmark_table",    "All Marks Tables (Combined)")
+# ── Report Layout & Appearance Defaults ────────────────────────
+_ss("report_page_size",      "A4")
+_ss("report_orientation",    "Portrait")
+_ss("report_margin_left",    40)
+_ss("report_margin_right",   40)
+_ss("intro_card_style",      "Callout (Accent Left Border)")
+_ss("intro_bg_color",        "#F8FAFC")
+_ss("intro_border_color",    "")  # empty string means defaults to primary_color
+_ss("table_border_style",    "Full Grid")
+_ss("table_border_color",    "#D1D5DB")
+_ss("table_border_width",    0.4)
+
 
 # ─────────────────────────────────────────────────────────────
 # UTILITIES
@@ -361,11 +375,17 @@ def compute_mock_interview_eligibility(row, sections, batch_df, cfg):
     import re as _re
 
     shortlist_cut = cfg.get("benchmark_shortlist", 90)
+    selected_tbl = cfg.get("mi_benchmark_table", "All Marks Tables (Combined)")
+    eval_sections = sections
+    if selected_tbl and selected_tbl != "All Marks Tables (Combined)":
+        ts = [s for s in sections if isinstance(s, dict) and (s.get("title") == selected_tbl or s.get("name") == selected_tbl)]
+        if ts:
+            eval_sections = ts
 
     # ── Try marks_table path first ─────────────────────────────────────
     marks_items = []
     total_scored, total_max = 0.0, 0.0
-    for sec in sections:
+    for sec in eval_sections:
         if not isinstance(sec, dict):
             continue
         if not sec.get("enabled", True) or sec.get("type") != "marks_table":
@@ -399,7 +419,7 @@ def compute_mock_interview_eligibility(row, sections, batch_df, cfg):
                 cohort_totals = []
                 for _, brow in batch_df.iterrows():
                     bs, bm = 0.0, 0.0
-                    for sec in sections:
+                    for sec in eval_sections:
                         if not isinstance(sec, dict):
                             continue
                         if not sec.get("enabled", True) or sec.get("type") != "marks_table":
@@ -1570,6 +1590,30 @@ with st.sidebar:
             value=st.session_state.benchmark_revision, step=5, key="sb_bm_rev"
         )
 
+        # ── Table-wise Mock Interview Basis ──
+        marks_tbl_names = [
+            s.get("title") or s.get("name")
+            for s in st.session_state.sections
+            if isinstance(s, dict) and s.get("type") == "marks_table" and s.get("enabled", True)
+        ]
+        seen_tbls = set()
+        uniq_tbl_names = [x for x in marks_tbl_names if x and not (x in seen_tbls or seen_tbls.add(x))]
+        tbl_options = ["All Marks Tables (Combined)"] + uniq_tbl_names
+        curr_tbl_sel = st.session_state.get("mi_benchmark_table", "All Marks Tables (Combined)")
+        sel_tbl_idx = tbl_options.index(curr_tbl_sel) if curr_tbl_sel in tbl_options else 0
+
+        st.session_state.mi_benchmark_table = st.selectbox(
+            "Mock Interview Shortlist Basis Table",
+            tbl_options,
+            index=sel_tbl_idx,
+            key="sb_mi_bm_table",
+            help=(
+                "Choose which marks table is used to calculate student percentiles and determine "
+                "mock interview eligibility. 'All Marks Tables (Combined)' evaluates students on total marks across all tables. "
+                "Or select an individual table (e.g. 'Python Programming' or 'MySQL') to evaluate eligibility specifically on that table."
+            )
+        )
+
         st.markdown("---")
         marks_tone = st.selectbox(
             "AI Feedback Tone", ["Encouraging", "Professional", "Strict", "CTO & Mentor"],
@@ -1712,6 +1756,84 @@ with st.sidebar:
             
         legal_text = st.text_area("Legal / Disclaimer Notice", value=st.session_state.legal_notice, height=70, key="sb_legal_txt")
         st.session_state.legal_notice = legal_text
+
+    with st.expander("📐 Report Layout & Appearance", expanded=False):
+        st.caption("Page Geometry, Identity Card Style & Table Aesthetics")
+
+        # ── Page Geometry ─────────────────────────────────────────
+        st.markdown("**Page Geometry**")
+        _ps_opts = ["A4", "Letter", "Legal"]
+        _curr_ps = st.session_state.report_page_size
+        _ps_idx = _ps_opts.index(_curr_ps) if _curr_ps in _ps_opts else 0
+        st.session_state.report_page_size = st.selectbox(
+            "Page Size", _ps_opts, index=_ps_idx, key="sb_page_size",
+            help="PDF paper dimensions. Default: A4 (matches standard certificate format)."
+        )
+
+        _ori_opts = ["Portrait", "Landscape"]
+        _curr_ori = st.session_state.report_orientation
+        _ori_idx = _ori_opts.index(_curr_ori) if _curr_ori in _ori_opts else 0
+        st.session_state.report_orientation = st.selectbox(
+            "Orientation", _ori_opts, index=_ori_idx, key="sb_orientation",
+            help="Page layout orientation. Default: Portrait."
+        )
+
+        _cm1, _cm2 = st.columns(2)
+        with _cm1:
+            st.session_state.report_margin_left = st.slider(
+                "Left Margin (pt)", 20, 60,
+                value=int(st.session_state.report_margin_left), step=2, key="sb_margin_left"
+            )
+        with _cm2:
+            st.session_state.report_margin_right = st.slider(
+                "Right Margin (pt)", 20, 60,
+                value=int(st.session_state.report_margin_right), step=2, key="sb_margin_right"
+            )
+
+        st.markdown("---")
+        # ── Intro / Student Greeting Card Style ───────────────────
+        st.markdown("**Intro & Identity Card Style**")
+        _ic_opts = ["Callout (Accent Left Border)", "Banner (Top Header Box)", "Clean (Minimal)"]
+        _curr_ic = st.session_state.intro_card_style
+        _ic_idx = _ic_opts.index(_curr_ic) if _curr_ic in _ic_opts else 0
+        st.session_state.intro_card_style = st.selectbox(
+            "Card Style", _ic_opts, index=_ic_idx, key="sb_intro_card_style",
+            help="'Callout' gives a thick accent border on the left. 'Banner' adds a top border. 'Clean' removes border padding."
+        )
+
+        _cc1, _cc2 = st.columns(2)
+        with _cc1:
+            st.session_state.intro_bg_color = st.color_picker(
+                "Card Background", value=st.session_state.intro_bg_color, key="sb_intro_bg"
+            )
+        with _cc2:
+            _default_border = primary_color if not st.session_state.intro_border_color else st.session_state.intro_border_color
+            st.session_state.intro_border_color = st.color_picker(
+                "Card Accent Border", value=_default_border, key="sb_intro_border"
+            )
+
+        st.markdown("---")
+        # ── Table Border Style Variants ───────────────────────────
+        st.markdown("**Table & Grid Aesthetics**")
+        _tb_opts = ["Full Grid", "Horizontal Lines Only", "Boxed Border", "Subtle Border", "Minimal (No Grid)"]
+        _curr_tb = st.session_state.table_border_style
+        _tb_idx = _tb_opts.index(_curr_tb) if _curr_tb in _tb_opts else 0
+        st.session_state.table_border_style = st.selectbox(
+            "Border Style", _tb_opts, index=_tb_idx, key="sb_tbl_border_style",
+            help="Customise table borders across all score and assessment tables."
+        )
+
+        _cb1, _cb2 = st.columns(2)
+        with _cb1:
+            st.session_state.table_border_color = st.color_picker(
+                "Border Line Color", value=st.session_state.table_border_color, key="sb_tbl_bcolor"
+            )
+        with _cb2:
+            st.session_state.table_border_width = st.slider(
+                "Border Width (pt)", 0.2, 1.5,
+                value=float(st.session_state.table_border_width), step=0.1, key="sb_tbl_bwidth"
+            )
+
 
 
 
@@ -2301,6 +2423,18 @@ with tab_data:
                 "show_watermark":             st.session_state.show_watermark,
                 "watermark_text":             st.session_state.watermark_text,
                 "legal_notice":               st.session_state.legal_notice,
+                # ── Table-wise Shortlisting & Theme Aesthetics ────────────
+                "mi_benchmark_table":         st.session_state.mi_benchmark_table,
+                "page_size":                  st.session_state.report_page_size,
+                "orientation":                st.session_state.report_orientation.lower(),
+                "margin_left":                st.session_state.report_margin_left,
+                "margin_right":               st.session_state.report_margin_right,
+                "intro_card_style":           {"Callout (Accent Left Border)": "callout", "Banner (Top Header Box)": "banner", "Clean (Minimal)": "clean"}.get(st.session_state.intro_card_style, "callout"),
+                "intro_bg_color":             st.session_state.intro_bg_color,
+                "intro_border_color":         st.session_state.intro_border_color if st.session_state.intro_border_color else primary_color,
+                "table_border_style":         {"Full Grid": "grid", "Horizontal Lines Only": "horizontal_only", "Boxed Border": "boxed", "Subtle Border": "subtle", "Minimal (No Grid)": "minimal"}.get(st.session_state.table_border_style, "grid"),
+                "table_border_color":         st.session_state.table_border_color,
+                "table_border_width":         st.session_state.table_border_width,
             }
             with st.spinner("Generating PDF..."):
                 try:
@@ -2612,6 +2746,18 @@ with tab_design:
                             "show_watermark":             st.session_state.show_watermark,
                             "watermark_text":             st.session_state.watermark_text,
                             "legal_notice":               st.session_state.legal_notice,
+                            # ── Table-wise Shortlisting & Theme Aesthetics ────────────
+                            "mi_benchmark_table":         st.session_state.mi_benchmark_table,
+                            "page_size":                  st.session_state.report_page_size,
+                            "orientation":                st.session_state.report_orientation.lower(),
+                            "margin_left":                st.session_state.report_margin_left,
+                            "margin_right":               st.session_state.report_margin_right,
+                            "intro_card_style":           {"Callout (Accent Left Border)": "callout", "Banner (Top Header Box)": "banner", "Clean (Minimal)": "clean"}.get(st.session_state.intro_card_style, "callout"),
+                            "intro_bg_color":             st.session_state.intro_bg_color,
+                            "intro_border_color":         st.session_state.intro_border_color if st.session_state.intro_border_color else primary_color,
+                            "table_border_style":         {"Full Grid": "grid", "Horizontal Lines Only": "horizontal_only", "Boxed Border": "boxed", "Subtle Border": "subtle", "Minimal (No Grid)": "minimal"}.get(st.session_state.table_border_style, "grid"),
+                            "table_border_color":         st.session_state.table_border_color,
+                            "table_border_width":         st.session_state.table_border_width,
                             "_batch_df":    _prev_df,   # ✅ full pandas DataFrame
                         }
 
@@ -2691,6 +2837,18 @@ with tab_gen:
             "show_watermark":             st.session_state.show_watermark,
             "watermark_text":             st.session_state.watermark_text,
             "legal_notice":               st.session_state.legal_notice,
+            # ── Table-wise Shortlisting & Theme Aesthetics ────────────
+            "mi_benchmark_table":         st.session_state.mi_benchmark_table,
+            "page_size":                  st.session_state.report_page_size,
+            "orientation":                st.session_state.report_orientation.lower(),
+            "margin_left":                st.session_state.report_margin_left,
+            "margin_right":               st.session_state.report_margin_right,
+            "intro_card_style":           {"Callout (Accent Left Border)": "callout", "Banner (Top Header Box)": "banner", "Clean (Minimal)": "clean"}.get(st.session_state.intro_card_style, "callout"),
+            "intro_bg_color":             st.session_state.intro_bg_color,
+            "intro_border_color":         st.session_state.intro_border_color if st.session_state.intro_border_color else primary_color,
+            "table_border_style":         {"Full Grid": "grid", "Horizontal Lines Only": "horizontal_only", "Boxed Border": "boxed", "Subtle Border": "subtle", "Minimal (No Grid)": "minimal"}.get(st.session_state.table_border_style, "grid"),
+            "table_border_color":         st.session_state.table_border_color,
+            "table_border_width":         st.session_state.table_border_width,
             "_batch_df":    gen_df,   # full batch for rank/percentile
         }
 
