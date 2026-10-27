@@ -24,6 +24,7 @@ from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT, TA_JUSTIFY
 from reportlab.lib.utils import ImageReader
 from reportlab.platypus.flowables import Flowable
+from report_theme import get_page_geometry, build_intro_card_style, apply_table_border_style
 
 # ──────────────────────────────────────────────────────────────────
 # SCORING ENGINE  (constants imported from constants.py)
@@ -414,7 +415,10 @@ def compute_student_data(row, cfg, rank=None, total_students=None):
 # STYLES
 # ──────────────────────────────────────────────────────────────────
 
-PAGE_W  = A4[0] - 90   # usable width inside margins
+# PAGE_W / PAGE_H are module-level fallbacks for flowables that don't
+# have access to a per-call cfg (custom flowables, section helpers, etc.).
+# build_single_report computes the real content_w via get_page_geometry(cfg).
+PAGE_W  = A4[0] - 80   # usable width inside default 40px L+R margins
 PAGE_H  = A4[1]
 
 # Corporate palette — Innomatics brand
@@ -531,9 +535,13 @@ def build_styles(pc=C_NAVY):
 # TABLE STYLE HELPERS
 # ──────────────────────────────────────────────────────────────────
 
-def corporate_table_style(header_bg=C_HEADER, stripe_bg="#F8FAFC"):
-    """Premium table: primary-colour header, white text, alternating stripes."""
-    return TableStyle([
+def corporate_table_style(header_bg=C_HEADER, stripe_bg="#F8FAFC", cfg=None):
+    """Premium table: primary-colour header, white text, alternating stripes.
+
+    When cfg is supplied, the table border style is read from
+    cfg['table_border_style'] (default: 'grid' — identical to previous behaviour).
+    """
+    ts = TableStyle([
         # Header row with primary colour fill
         ("BACKGROUND",    (0, 0), (-1, 0),  colors.HexColor(header_bg)),
         ("TEXTCOLOR",     (0, 0), (-1, 0),  colors.white),
@@ -550,13 +558,15 @@ def corporate_table_style(header_bg=C_HEADER, stripe_bg="#F8FAFC"):
         ("RIGHTPADDING",  (0, 0), (-1, -1), 8),
         ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
         ("ALIGN",         (0, 0), (-1, -1), "LEFT"),
-        # Borders
-        ("GRID",          (0, 0), (-1, -1), 0.4, colors.HexColor("#D1D5DB")),
+        # Header underline accent
         ("LINEBELOW",     (0, 0), (-1, 0),  1.5, colors.HexColor(header_bg)),
         # Alternating stripes
         ("ROWBACKGROUNDS", (0, 1), (-1, -1),
          [colors.white, colors.HexColor(stripe_bg)]),
     ])
+    # Apply border style from cfg (defaults to "grid" — same as before)
+    effective_cfg = cfg or {}
+    return apply_table_border_style(ts, effective_cfg, header_bg)
 
 
 def accent_table_style(accent=C_GOLD):
@@ -767,7 +777,18 @@ def render_identity(story, row, cfg, styles, pdata):
 
     if intro:
         resolved_intro = md_to_rl(intro.replace("{company_name}", company))
-        story.append(safe_paragraph(resolved_intro, styles["intro"]))
+        intro_card_style = cfg.get("intro_card_style", "clean")
+        if intro_card_style in ("callout", "banner"):
+            # Wrap intro text in a styled card using report_theme
+            content_w = cfg.get("_content_w", PAGE_W)
+            intro_tbl = Table(
+                [[safe_paragraph(resolved_intro, styles["intro"])]],
+                colWidths=[content_w],
+            )
+            intro_tbl.setStyle(build_intro_card_style(cfg))
+            story.append(intro_tbl)
+        else:
+            story.append(safe_paragraph(resolved_intro, styles["intro"]))
         story.append(Spacer(1, 2))
 
     # ── Identity table — no header row, just label:value pairs like the reference
@@ -1738,10 +1759,18 @@ def build_single_report(row, cfg: dict, groq_client=None,
         watermark_text = "CONFIDENTIAL"
     legal_notice = cfg.get("legal_notice", None)
 
+    # ── Page geometry (report_theme.py) ─────────────────────────────────────
+    # Defaults reproduce the previous hardcoded A4-portrait behaviour exactly.
+    margin_left  = float(cfg.get("margin_left",  40))
+    margin_right = float(cfg.get("margin_right", 40))
+    _pw, _ph, content_w, final_pagesize = get_page_geometry(cfg)
+    # Store content_w in cfg so render helpers (render_identity intro card) can read it
+    cfg["_content_w"] = content_w
+
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
-        buf, pagesize=A4,
-        rightMargin=40, leftMargin=40,
+        buf, pagesize=final_pagesize,
+        rightMargin=margin_right, leftMargin=margin_left,
         topMargin=122,    # space for decorative centered header band
         bottomMargin=32,
     )
