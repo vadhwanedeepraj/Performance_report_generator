@@ -3189,23 +3189,21 @@ with tab_gen:
 
         if st.session_state.last_zip:
             ts_dl = st.session_state.last_zip_ts or datetime.now().strftime("%Y%m%d_%H%M")
-            c_dl_zip, c_email_nav = st.columns([1, 1])
-            with c_dl_zip:
-                dl_zip = st.download_button(
-                    f"📥 Download All Reports ZIP — {company_name} ({ts_dl})",
-                    data=st.session_state.last_zip,
-                    file_name=f"{company_name.replace(' ','_')}_Reports_{ts_dl}.zip",
-                    mime="application/zip",
-                    key="g_dl_zip",
-                    width='stretch',
-                )
-            with c_email_nav:
-                st.page_link(
-                    "pages/2_Email_Dispatcher.py",
-                    label="📧 Send via Email Dispatcher",
-                    icon="📧",
-                    width='stretch',
-                )
+            # Email Dispatcher currently detached — full-width download button
+            dl_zip = st.download_button(
+                f"📥 Download All Reports ZIP — {company_name} ({ts_dl})",
+                data=st.session_state.last_zip,
+                file_name=f"{company_name.replace(' ','_')}_Reports_{ts_dl}.zip",
+                mime="application/zip",
+                key="g_dl_zip",
+                width='stretch',
+            )
+            # NOTE: To re-attach the Email Dispatcher in the future:
+            # 1. Rename pages/_2_Email_Dispatcher.py -> pages/2_Email_Dispatcher.py
+            # 2. Uncomment the two-column layout below:
+            # c_dl_zip, c_email_nav = st.columns([1, 1])
+            # with c_email_nav:
+            #     st.page_link("pages/2_Email_Dispatcher.py", label="📧 Send via Email Dispatcher", icon="📧", width='stretch')
             if dl_zip:
                 # Log one download row per student (not one aggregate row)
                 for _r in st.session_state.gen_results:

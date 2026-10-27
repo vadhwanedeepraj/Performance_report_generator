@@ -1,59 +1,29 @@
 """
-pages/2_Email_Dispatcher.py
-============================
-Email Dispatcher Pro — Sidebar Wizard Design
+=============================================================================
+EMAIL DISPATCHER PRO (DETACHED / STASHED FEATURE)
+=============================================================================
+STATUS: CURRENTLY DETACHED FROM APPLICATION
+-----------------------------------------------------------------------------
+This file contains the complete, working implementation of Email Dispatcher Pro.
+It is detached from Streamlit application routing by prefixing the filename
+with an underscore `_` (Streamlit standard for hidden/ignored page files).
 
-STATUS: TEMPORARILY DISABLED
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-This page is disabled for now. Only the Report Generator is active.
-To re-enable, remove the `st.stop()` call below and uncomment the
-full implementation block at the bottom of this file.
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+HOW TO RE-ATTACH THIS FEATURE TO THE APPLICATION LATER:
+1. Rename this file:
+     pages/_2_Email_Dispatcher.py  -->  pages/2_Email_Dispatcher.py
+2. In `streamlit_app.py`, re-enable the navigation button around line 3192.
+=============================================================================
+Feature Capabilities:
+  - Persistent sidebar wizard navigation (7 workflow sub-steps)
+  - Manual email entry + CSV + direct PDF upload
+  - Dual-body email composer (With PDF / Without PDF)
+  - Live recipient preview panel
+  - Encrypted SMTP credential storage (Fernet AES)
+  - Launch Campaign screen with audit metrics
+  - Dispatch state machine (Pause / Resume / Cancel)
+  - Analytics charts and dispatch logs
+=============================================================================
 """
-
-import streamlit as st
-
-st.set_page_config(
-    page_title="Email Dispatcher — Coming Soon",
-    page_icon="📧",
-    layout="centered",
-)
-
-st.markdown("""
-<style>
-html, body { font-family: 'Inter', sans-serif; }
-</style>
-""", unsafe_allow_html=True)
-
-st.markdown("## 📧 Email Dispatcher")
-st.info(
-    "🚧 **This feature is temporarily disabled.**\n\n"
-    "The Email Dispatcher will be available in a future release. "
-    "For now, please use the **Report Generator** to generate PDF reports."
-)
-st.page_link("streamlit_app.py", label="← Back to Report Generator", icon="🏠")
-
-st.stop()
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# DISABLED CODE — Full Email Dispatcher Implementation
-# To re-enable: delete the st.stop() above and un-comment the block below.
-# ══════════════════════════════════════════════════════════════════════════════
-
-DISABLED_EMAIL_DISPATCHER = '''
-
-Email Dispatcher Pro — Sidebar Wizard Design
-Matches the reference app UI with:
-  • Persistent sidebar navigation (7 pages)
-  • Manual email entry + CSV + direct PDF upload
-  • Dual-body email composer (With PDF / Without PDF)
-  • Live recipient preview panel
-  • Encrypted SMTP credential storage (Fernet AES)
-  • Launch Campaign screen with 4 audit metrics
-  • Dispatch state machine (Pause / Resume / Cancel)
-  • Analytics charts
-
 
 import io
 import os
@@ -1257,6 +1227,3 @@ elif page == "📊 Analytics":
 
         except Exception as e:
             st.error(f"Could not load analytics: {e}")
-
-'''
-
