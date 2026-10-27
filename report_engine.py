@@ -8,7 +8,8 @@ import json
 import threading
 from datetime import date
 from constants import (
-    RATING_MAP, GRADE_SCALE_0_4, AI_CACHE_DIR, AI_CACHE_TTL_DAYS,
+    RATING_MAP, GRADE_SCALE_0_4, grade_label_from_score_0_4,
+    AI_CACHE_DIR, AI_CACHE_TTL_DAYS,
     MOCK_PDF_LABEL_SHORTLISTED, MOCK_PDF_LABEL_REVISION,
 )
 
@@ -374,14 +375,8 @@ def compute_student_data(row, cfg, rank=None, total_students=None):
     # Set overall score to exactly match the Technical average
     overall = tech_avg
 
-    def get_gv(sc):
-        if sc >= 3.5: return "A+ (Excellent)", "Pass — Outstanding",       "#059669"
-        if sc >= 3.0: return "A  (Good)",      "Pass — Proficient",        "#16a34a"
-        if sc >= 2.5: return "B  (Average)",   "Average — Needs Effort",   "#d97706"
-        if sc >= 1.5: return "C  (Below Avg)", "Poor — Serious Gaps",      "#ea580c"
-        return              "D  (Critical)",   "Critical Gap — Action Now", "#dc2626"
-
-    grade, verdict, v_color = get_gv(overall)
+    # Use centralized grade mapping from constants.py (single source of truth)
+    grade, verdict, v_color = grade_label_from_score_0_4(overall)
 
     strengths  = sorted([s for s in skill_list if s["score"] >= 3.5],
                          key=lambda x: x["score"], reverse=True)[:4]

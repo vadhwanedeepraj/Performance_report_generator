@@ -48,18 +48,31 @@ GRADE_SCALE_PCT: list[tuple] = [
 ]
 
 # ─────────────────────────────────────────────────────────────────────
+# GRADE DESCRIPTORS (0–4 Scale Display Format for PDF Reports)
+# ─────────────────────────────────────────────────────────────────────
+GRADE_DESCRIPTOR_0_4: dict[str, str] = {
+    "A+": "A+ (Excellent)",
+    "A":  "A  (Good)",
+    "B":  "B  (Average)",
+    "C":  "C  (Below Avg)",
+    "D":  "D  (Critical)",
+}
+
+# ─────────────────────────────────────────────────────────────────────
 # HELPER FUNCTIONS
 # ─────────────────────────────────────────────────────────────────────
 
-def grade_label_from_score_0_4(score: float) -> tuple[str, str, str]:
+def grade_label_from_score_0_4(score: float, include_descriptor: bool = True) -> tuple[str, str, str]:
     """
-    Map a 0–4 float score to (grade_label, hex_color, verdict_text).
-    Used by report_engine.py.
+    Map a 0–4 float score to (grade_label, verdict_text, hex_color).
+    Used by report_engine.py compute_student_data().
     """
     for threshold, label, color, verdict in GRADE_SCALE_0_4:
         if score >= threshold:
-            return label, color, verdict
-    return "D", "#dc2626", "Critical Gap — Action Now"
+            disp = GRADE_DESCRIPTOR_0_4.get(label, label) if include_descriptor else label
+            return disp, verdict, color
+    disp_d = GRADE_DESCRIPTOR_0_4.get("D", "D  (Critical)") if include_descriptor else "D"
+    return disp_d, "Critical Gap — Action Now", "#dc2626"
 
 
 def grade_label_from_pct(score_pct: float) -> tuple[str, str, str]:
